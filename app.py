@@ -599,7 +599,9 @@ def render_setup() -> None:
         with c2:
             if st.button("Cargar", use_container_width=True):
                 if selected_group and selected_group != "-- Seleccionar --":
-                    st.session_state.selected_group_names = "\n".join(saved_groups[selected_group])
+                    loaded_names = "\n".join(saved_groups[selected_group])
+                    st.session_state.selected_group_names = loaded_names
+                    st.session_state.players_input_area = loaded_names
                     st.rerun()
         
         st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
