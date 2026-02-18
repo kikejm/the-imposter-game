@@ -238,7 +238,7 @@ def init_db():
                     word TEXT NOT NULL,
                     hints TEXT NOT NULL,
                     room_id TEXT DEFAULT 'public',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """))
             s.execute(text("""
@@ -247,7 +247,7 @@ def init_db():
                     group_name TEXT NOT NULL,
                     player_names TEXT NOT NULL,
                     room_id TEXT DEFAULT 'public',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """))
 
