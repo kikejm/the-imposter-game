@@ -13,9 +13,6 @@ from typing import List, Optional
 import streamlit as st
 import streamlit.components.v1 as components
 
-import json
-from dataclasses import asdict
-
 # ╔══════════════════════════════════════════════════════════════╗
 #  SECCIÓN 1 — MODELOS DE DATOS
 # ╚══════════════════════════════════════════════════════════════╝
@@ -232,11 +229,21 @@ def init_db():
     conn = get_db_connection()
     try:
         with conn.session as s:
+            # Tabla de palabras
             s.execute(text("""
                 CREATE TABLE IF NOT EXISTS custom_words (
                     id SERIAL PRIMARY KEY,
                     word TEXT UNIQUE NOT NULL,
                     hints TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """))
+            # Grupos de Jugadores
+            s.execute(text("""
+                CREATE TABLE IF NOT EXISTS player_groups (
+                    id SERIAL PRIMARY KEY,
+                    group_name TEXT UNIQUE NOT NULL,
+                    player_names TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """))
@@ -276,6 +283,47 @@ def delete_word_from_db(word: str):
     try:
         with conn.session as s:
             s.execute(text("DELETE FROM custom_words WHERE word = :w"), {"w": word})
+            s.commit()
+    except Exception:
+        pass
+
+def save_player_group_db(group_name: str, players: List[str]) -> bool:
+    conn = get_db_connection()
+    players_str = "|".join(players)
+    try:
+        with conn.session as s:
+            # Upsert: Si existe el nombre, actualiza la lista
+            s.execute(
+                text("""
+                    INSERT INTO player_groups (group_name, player_names) 
+                    VALUES (:n, :p)
+                    ON CONFLICT (group_name) 
+                    DO UPDATE SET player_names = EXCLUDED.player_names;
+                """),
+                {"n": group_name, "p": players_str}
+            )
+            s.commit()
+        return True
+    except Exception:
+        return False
+
+def load_player_groups_db() -> dict:
+    conn = get_db_connection()
+    try:
+        df = conn.query("SELECT group_name, player_names FROM player_groups ORDER BY created_at DESC", ttl=0)
+        groups = {}
+        if not df.empty:
+            for _, row in df.iterrows():
+                groups[row['group_name']] = row['player_names'].split('|')
+        return groups
+    except Exception:
+        return {}
+
+def delete_player_group_db(group_name: str):
+    conn = get_db_connection()
+    try:
+        with conn.session as s:
+            s.execute(text("DELETE FROM player_groups WHERE group_name = :n"), {"n": group_name})
             s.commit()
     except Exception:
         pass
@@ -580,6 +628,47 @@ def render_setup() -> None:
         <div class="hero-sub">El juego de engaño y deducción social</div>
     </div>
     """, unsafe_allow_html=True)
+    # ── GESTIÓN DE GRUPOS DE JUGADORES ──
+    saved_groups = load_player_groups_db() 
+
+    if "selected_group_names" not in st.session_state:
+        st.session_state.selected_group_names = "Ana\nBerto\nCarla\nDavid"
+    
+    with st.expander("&#128190; Cargar / Guardar Grupo de Jugadores", expanded=False):
+        c1, c2 = st.columns([2, 1])
+        with c1:
+            group_options = ["-- Seleccionar --"] + list(saved_groups.keys())
+            selected_group = st.selectbox("Cargar grupo existente:", group_options, label_visibility="collapsed")
+        with c2:
+            if st.button("Cargar", use_container_width=True):
+                if selected_group and selected_group != "-- Seleccionar --":
+                    st.session_state.selected_group_names = "\n".join(saved_groups[selected_group])
+                    st.rerun()
+        
+        st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
+        
+        # Guardar grupo actual
+        c3, c4 = st.columns([2, 1])
+        with c3:
+            new_group_name = st.text_input("Guardar actuales como:", placeholder="Ej: Familia Domingos", label_visibility="collapsed")
+        with c4:
+            if st.button("Guardar", use_container_width=True):
+                current_list = [x.strip() for x in st.session_state.selected_group_names.splitlines() if x.strip()]
+                if len(current_list) < 3:
+                    st.error("Mínimo 3 jugadores")
+                elif not new_group_name:
+                    st.error("Pon un nombre")
+                else:
+                    save_player_group_db(new_group_name, current_list)
+                    st.success(f"Grupo '{new_group_name}' guardado.")
+                    time.sleep(1) # Pequeña pausa para ver el mensaje
+                    st.rerun()
+                    
+        # Borrar grupo
+        if selected_group and selected_group != "-- Seleccionar --":
+            if st.button(f"Borrar grupo '{selected_group}'", type="secondary"):
+                delete_player_group_db(selected_group)
+                st.rerun()
 
     # ── JUGADORES ──
     st.markdown('<div class="section-header">&#128101; JUGADORES</div>', unsafe_allow_html=True)
@@ -587,12 +676,16 @@ def render_setup() -> None:
     default_names = st.session_state.get("_uploaded_names", "Ana\nBerto\nCarla\nDavid")
     names_raw = st.text_area(
         label="Nombres",
-        value=default_names,
+        value=st.session_state.selected_group_names,
         height=130,
         label_visibility="collapsed",
         placeholder="Ana\nBerto\nCarla\nDavid...",
         key="players_input_area" 
     )
+
+    if names_raw != st.session_state.selected_group_names:
+        st.session_state.selected_group_names = names_raw
+        
     player_names = [n.strip() for n in names_raw.strip().splitlines() if n.strip()]
 
     count_color = "#e63329" if len(player_names) < 3 else "#00d264"
