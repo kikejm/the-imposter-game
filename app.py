@@ -652,7 +652,6 @@ def render_setup() -> None:
     )
 
     # ── OPCIONES ──
-    handle_config_persistence(player_names)
 
     st.markdown('<div class="section-header">&#9881; OPCIONES</div>', unsafe_allow_html=True)
 
