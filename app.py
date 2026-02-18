@@ -239,7 +239,6 @@ def init_db():
                     hints TEXT NOT NULL,
                     room_id TEXT DEFAULT 'public',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(word, room_id)
                 );
             """))
             s.execute(text("""
@@ -249,9 +248,22 @@ def init_db():
                     player_names TEXT NOT NULL,
                     room_id TEXT DEFAULT 'public',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(group_name, room_id)
                 );
             """))
+
+            # Migración Automática: Añadir columna room_id si la tabla es antigua
+            s.execute(text("ALTER TABLE custom_words ADD COLUMN IF NOT EXISTS room_id TEXT DEFAULT 'public';"))
+            s.execute(text("ALTER TABLE player_groups ADD COLUMN IF NOT EXISTS room_id TEXT DEFAULT 'public';"))
+
+            # Corregir Unicidad: Eliminar restricción global vieja y crear la nueva por sala
+            # Borra constraint antigua (si existe) que impedía repetir palabras entre salas
+            s.execute(text("ALTER TABLE custom_words DROP CONSTRAINT IF EXISTS custom_words_word_key;"))
+            s.execute(text("ALTER TABLE player_groups DROP CONSTRAINT IF EXISTS player_groups_group_name_key;"))
+            
+            # Crea índices únicos combinados (Palabra + Sala)
+            s.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS idx_words_room ON custom_words (word, room_id);"))
+            s.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS idx_groups_room ON player_groups (group_name, room_id);"))
+
             s.commit()
     except Exception as e:
         st.error(f"Error DB: {e}")
