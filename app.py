@@ -418,49 +418,6 @@ def start_role_distribution() -> None:
     state.reveal_done          = False
     change_state(STATE_ROLE_DIST)
 
-def handle_config_persistence(player_names_ref: List[str]):
-    st.markdown('<div class="section-header">&#128190; GESTIÓN DE PARTIDA</div>', unsafe_allow_html=True)
-    
-    col_dl, col_ul = st.columns(2)
-    
-    with col_dl:
-        current_data = {
-            "players": player_names_ref,
-            "custom_words": [asdict(w) for w in st.session_state.custom_dataset]
-        }
-        json_str = json.dumps(current_data, indent=2)
-        st.download_button(
-            label="&#128229; Guardar Configuración",
-            data=json_str,
-            file_name="impostor_config.json",
-            mime="application/json",
-            use_container_width=True
-        )
-
-    with col_ul:
-        uploaded_file = st.file_uploader("Cargar Configuración", type=["json"], label_visibility="collapsed")
-        if uploaded_file is not None:
-            try:
-                data = json.load(uploaded_file)
-                
-                # Cargar Jugadores
-                if "players" in data and isinstance(data["players"], list):
-                    # Actualizamos el widget de texto forzando el valor
-                    st.session_state["_uploaded_names"] = "\n".join(data["players"])
-                    st.success(f"Cargados {len(data['players'])} jugadores.")
-                
-                # Cargar Palabras
-                if "custom_words" in data and isinstance(data["custom_words"], list):
-                    new_dataset = []
-                    for item in data["custom_words"]:
-                        if "word" in item and "hints" in item:
-                            new_dataset.append(WordEntry(word=item["word"], hints=item["hints"]))
-                    st.session_state.custom_dataset = new_dataset
-                    st.success(f"Cargadas {len(new_dataset)} palabras personalizadas.")
-                    
-            except Exception as e:
-                st.error("Error al leer el archivo JSON.")
-
 # ╔══════════════════════════════════════════════════════════════╗
 #  SECCIÓN 7 — HTML COMPONENTS (iframe-rendered, sin limitaciones)
 # ╚══════════════════════════════════════════════════════════════╝
@@ -685,7 +642,7 @@ def render_setup() -> None:
 
     if names_raw != st.session_state.selected_group_names:
         st.session_state.selected_group_names = names_raw
-        
+
     player_names = [n.strip() for n in names_raw.strip().splitlines() if n.strip()]
 
     count_color = "#e63329" if len(player_names) < 3 else "#00d264"
