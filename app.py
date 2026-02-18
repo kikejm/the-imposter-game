@@ -222,40 +222,45 @@ html, body, [data-testid="stApp"] {
 from sqlalchemy import text
 
 def get_db_connection():
-    # "neon" coincide con [connections.neon] en secrets.toml
-    return st.connection("neon", type="sql") 
+    return st.connection("neon", type="sql")
+
+def get_room_id():
+    # Retorna la clave de sala actual o 'public' por defecto
+    return st.session_state.get("room_id", "public").strip() or "public"
 
 def init_db():
     conn = get_db_connection()
     try:
         with conn.session as s:
-            # Tabla de palabras
             s.execute(text("""
                 CREATE TABLE IF NOT EXISTS custom_words (
                     id SERIAL PRIMARY KEY,
-                    word TEXT UNIQUE NOT NULL,
+                    word TEXT NOT NULL,
                     hints TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    room_id TEXT DEFAULT 'public',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(word, room_id)
                 );
             """))
-            # Grupos de Jugadores
             s.execute(text("""
                 CREATE TABLE IF NOT EXISTS player_groups (
                     id SERIAL PRIMARY KEY,
-                    group_name TEXT UNIQUE NOT NULL,
+                    group_name TEXT NOT NULL,
                     player_names TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    room_id TEXT DEFAULT 'public',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(group_name, room_id)
                 );
             """))
             s.commit()
     except Exception as e:
-        st.error(f"Error inicializando DB: {e}")
+        st.error(f"Error DB: {e}")
 
 def load_words_from_db() -> List[WordEntry]:
     conn = get_db_connection()
-    # ttl=0 asegura que siempre traiga datos frescos, no cacheados
+    rid = get_room_id()
     try:
-        df = conn.query("SELECT word, hints FROM custom_words ORDER BY created_at DESC", ttl=0)
+        df = conn.query("SELECT word, hints FROM custom_words WHERE room_id = :rid ORDER BY created_at DESC", params={"rid": rid}, ttl=0)
         dataset = []
         if not df.empty:
             for _, row in df.iterrows():
@@ -266,12 +271,13 @@ def load_words_from_db() -> List[WordEntry]:
 
 def add_word_to_db(word: str, hints: List[str]) -> bool:
     conn = get_db_connection()
+    rid = get_room_id()
     hints_str = "|".join(hints)
     try:
         with conn.session as s:
             s.execute(
-                text("INSERT INTO custom_words (word, hints) VALUES (:w, :h)"),
-                {"w": word, "h": hints_str}
+                text("INSERT INTO custom_words (word, hints, room_id) VALUES (:w, :h, :rid)"),
+                {"w": word, "h": hints_str, "rid": rid}
             )
             s.commit()
         return True
@@ -280,27 +286,28 @@ def add_word_to_db(word: str, hints: List[str]) -> bool:
 
 def delete_word_from_db(word: str):
     conn = get_db_connection()
+    rid = get_room_id()
     try:
         with conn.session as s:
-            s.execute(text("DELETE FROM custom_words WHERE word = :w"), {"w": word})
+            s.execute(text("DELETE FROM custom_words WHERE word = :w AND room_id = :rid"), {"w": word, "rid": rid})
             s.commit()
     except Exception:
         pass
 
 def save_player_group_db(group_name: str, players: List[str]) -> bool:
     conn = get_db_connection()
+    rid = get_room_id()
     players_str = "|".join(players)
     try:
         with conn.session as s:
-            # Upsert: Si existe el nombre, actualiza la lista
             s.execute(
                 text("""
-                    INSERT INTO player_groups (group_name, player_names) 
-                    VALUES (:n, :p)
-                    ON CONFLICT (group_name) 
+                    INSERT INTO player_groups (group_name, player_names, room_id) 
+                    VALUES (:n, :p, :rid)
+                    ON CONFLICT (group_name, room_id) 
                     DO UPDATE SET player_names = EXCLUDED.player_names;
                 """),
-                {"n": group_name, "p": players_str}
+                {"n": group_name, "p": players_str, "rid": rid}
             )
             s.commit()
         return True
@@ -309,8 +316,9 @@ def save_player_group_db(group_name: str, players: List[str]) -> bool:
 
 def load_player_groups_db() -> dict:
     conn = get_db_connection()
+    rid = get_room_id()
     try:
-        df = conn.query("SELECT group_name, player_names FROM player_groups ORDER BY created_at DESC", ttl=0)
+        df = conn.query("SELECT group_name, player_names FROM player_groups WHERE room_id = :rid ORDER BY created_at DESC", params={"rid": rid}, ttl=0)
         groups = {}
         if not df.empty:
             for _, row in df.iterrows():
@@ -321,9 +329,10 @@ def load_player_groups_db() -> dict:
 
 def delete_player_group_db(group_name: str):
     conn = get_db_connection()
+    rid = get_room_id()
     try:
         with conn.session as s:
-            s.execute(text("DELETE FROM player_groups WHERE group_name = :n"), {"n": group_name})
+            s.execute(text("DELETE FROM player_groups WHERE group_name = :n AND room_id = :rid"), {"n": group_name, "rid": rid})
             s.commit()
     except Exception:
         pass
@@ -585,6 +594,19 @@ def render_setup() -> None:
         <div class="hero-sub">El juego de engaño y deducción social</div>
     </div>
     """, unsafe_allow_html=True)
+
+    st.markdown("---")
+    c_key, c_info = st.columns([2,1])
+    with c_key:
+        # Input para la clave de sala
+        room_key = st.text_input("🔑 Tu Clave Secreta (Sala)", value=st.session_state.get("room_id", ""), type="password", help="Usa una clave única para guardar tus datos en privado.")
+        if room_key != st.session_state.get("room_id", ""):
+            st.session_state.room_id = room_key
+            st.session_state.custom_dataset = load_words_from_db()
+            st.rerun()
+    with c_info:
+        st.info("Si pones una clave, tus palabras y grupos serán privados y nadie más podrá verlos ni borrarlos.")
+
     # ── GESTIÓN DE GRUPOS DE JUGADORES ──
     saved_groups = load_player_groups_db() 
 
@@ -740,13 +762,17 @@ def render_custom_words() -> None:
 
     dataset: List[WordEntry] = st.session_state.custom_dataset
     st.markdown(f'<div class="info-pill">&#128230; {len(dataset)} palabras en el banco</div>', unsafe_allow_html=True)
-    for i, entry in enumerate(dataset):
-        with st.expander(f"&#128204; {entry.word}  ({len(entry.hints)} pistas)"):
-            st.write(" · ".join(entry.hints))
-            if st.button("&#128465; Eliminar", key=f"del_{i}"):
-                delete_word_from_db(entry.word)
-                st.session_state.custom_dataset = load_words_from_db() # Recargar
-                st.rerun()
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+    with st.expander(f"&#128194; Ver Banco de Palabras ({len(dataset)} guardadas)", expanded=False):
+        if not dataset:
+            st.caption("El banco está vacío. Añade palabras arriba.")
+        for i, entry in enumerate(dataset):
+            with st.expander(f"&#128204; {entry.word}  ({len(entry.hints)} pistas)"):
+                st.write(" · ".join(entry.hints))
+                if st.button("&#128465; Eliminar", key=f"del_{i}"):
+                    delete_word_from_db(entry.word)
+                    st.session_state.custom_dataset = load_words_from_db() # Recargar
+                    st.rerun()
 
     st.markdown("---")
     col1, col2 = st.columns(2)
